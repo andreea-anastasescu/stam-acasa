@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
+using Org.BouncyCastle.Asn1.Cms;
+using StamAcasa.Api.Extensions;
+using StamAcasa.Api.Models;
 using StamAcasa.Api.Services;
 using StamAcasa.Common.DTO;
 using StamAcasa.Common.Services;
@@ -66,21 +69,13 @@ namespace StamAcasa.Api.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> PostAnswer([FromBody]object content, [FromQuery]int? id = null)
+        public async Task<IActionResult> PostAnswer([FromBody]UserForm form, [FromQuery]int? id = null)
         {
             var subClaimValue = User.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
             if (subClaimValue == null)
                 return new UnauthorizedResult();
 
-            var form = JsonConvert.DeserializeObject<dynamic>(content.ToString());
-            if (form.formId == null)
-                return new BadRequestResult();
-
-            //leaving this as local time, but we should either use UTC
-            //or store DateTimeOffset instead of DateTime
-            var timestamp = DateTime.Now;
-            form.Add("Timestamp", timestamp);
-
+            
             var authenticatedUser = await _userService.GetUserInfo(subClaimValue);
             var isRequestAllowed =  await IsRequestAllowed(id, authenticatedUser);
             if (isRequestAllowed.NotAllowed)
@@ -88,7 +83,6 @@ namespace StamAcasa.Api.Controllers
                 return isRequestAllowed.Result;
             }
 
-            form.Add("UserId", id ?? authenticatedUser.Id);
             // TODO: add user profile info as added properties to form, before save
 
             var contentToSave = JsonConvert.SerializeObject(form).ToString();
@@ -96,13 +90,13 @@ namespace StamAcasa.Api.Controllers
             await _formService.AddForm(new FormInfo
             {
                 Content = contentToSave,
-                Timestamp = timestamp,
+                Timestamp = form.Timestamp.ToDateTimeFromEpoch(),
                 UserId = id ?? authenticatedUser.Id,
-                FormTypeId = form.formId.ToString()
+                FormTypeId = form.FormId.ToString()
             });
 
             await _fileService.SaveRawData(contentToSave,
-                $"{Guid.Parse(subClaimValue).ToString("N")}_{form.formId}_{timestamp.ToEpochTime()}.json");
+                $"{Guid.Parse(subClaimValue).ToString("N")}_{form.FormId}_{form.Timestamp}.json");
 
             return new OkObjectResult(string.Empty);
         }
