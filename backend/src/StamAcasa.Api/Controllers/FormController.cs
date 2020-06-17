@@ -80,23 +80,7 @@ namespace StamAcasa.Api.Controllers
                 return new UnauthorizedResult();
             }
 
-            var form = JsonConvert.DeserializeObject<dynamic>(content.ToString());
-            if (form.formId == null)
-                return new BadRequestResult();
-
-            //leaving this as local time, but we should either use UTC
-            //or store DateTimeOffset instead of DateTime
-            var timestamp = DateTime.Now;
-            form.Add("Timestamp", timestamp);
-
             var authenticatedUser = await UserService.GetUserInfoBySub(subClaimValue);
-            
-            var authenticatedUser = await _userService.GetUserInfo(subClaimValue);
-            var isRequestAllowed =  await IsRequestAllowed(id, authenticatedUser);
-            if (isRequestAllowed.NotAllowed)
-            {
-                return isRequestAllowed.Result;
-            }
 
             // TODO: add user profile info as added properties to form, before save
 
@@ -111,7 +95,7 @@ namespace StamAcasa.Api.Controllers
             });
 
             await _fileService.SaveRawData(contentToSave,
-                $"{Guid.Parse(subClaimValue).ToString("N")}_{form.FormId}_{form.Timestamp}.json");
+                $"{Guid.Parse(subClaimValue):N}_{form.FormId}_{form.Timestamp}.json");
 
             return new OkObjectResult(string.Empty);
         }
