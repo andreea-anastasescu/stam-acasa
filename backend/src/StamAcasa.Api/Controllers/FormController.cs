@@ -3,7 +3,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using IdentityModel;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Org.BouncyCastle.Asn1.Cms;
@@ -18,18 +17,16 @@ namespace StamAcasa.Api.Controllers
     [Authorize(AuthenticationSchemes = "answersApi")]
     [Route("api/[controller]")]
     [ApiController]
-    public class FormController : ControllerBase
+    public class FormController : BaseApiController
     {
         private readonly IFileService _fileService;
         private readonly IFormService _formService;
-        private readonly IUserService _userService;
         private readonly IAssessmentService _assessmentService;
 
-        public FormController(IFileService fileService, IFormService formService, IUserService userService, IAssessmentService assessmentService)
+        public FormController(IFileService fileService, IFormService formService, IUserService userService, IAssessmentService assessmentService) : base(userService)
         {
             _fileService = fileService;
             _formService = formService;
-            _userService = userService;
             _assessmentService = assessmentService;
         }
 
@@ -40,11 +37,9 @@ namespace StamAcasa.Api.Controllers
             if (subClaimValue == null)
                 return new UnauthorizedResult();
 
-            var authenticatedUser = await _userService.GetUserInfo(subClaimValue);
-            var isRequestAllowed = await IsRequestAllowed(id, authenticatedUser);
-            if (isRequestAllowed.NotAllowed)
+            if (await IsRequestInvalid(subClaimValue, id))
             {
-                return isRequestAllowed.Result;
+                return new UnauthorizedResult();
             }
 
             var result =
@@ -55,13 +50,18 @@ namespace StamAcasa.Api.Controllers
             return new OkObjectResult(result);
         }
 
-
         [HttpGet("version")]
         public async Task<IActionResult> GetVersion([FromQuery(Name = "userId")] int? userId)
         {
             var subClaimValue = User.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
-            if (subClaimValue == null)
+
+            if (string.IsNullOrEmpty(subClaimValue))
                 return new UnauthorizedResult();
+
+            if (await IsRequestInvalid(subClaimValue, userId))
+            {
+                return new UnauthorizedResult();
+            }
 
             var assessment = await _assessmentService.GetAssessment(subClaimValue, userId);
 
@@ -75,6 +75,21 @@ namespace StamAcasa.Api.Controllers
             if (subClaimValue == null)
                 return new UnauthorizedResult();
 
+            if (await IsRequestInvalid(subClaimValue, id))
+            {
+                return new UnauthorizedResult();
+            }
+
+            var form = JsonConvert.DeserializeObject<dynamic>(content.ToString());
+            if (form.formId == null)
+                return new BadRequestResult();
+
+            //leaving this as local time, but we should either use UTC
+            //or store DateTimeOffset instead of DateTime
+            var timestamp = DateTime.Now;
+            form.Add("Timestamp", timestamp);
+
+            var authenticatedUser = await UserService.GetUserInfoBySub(subClaimValue);
             
             var authenticatedUser = await _userService.GetUserInfo(subClaimValue);
             var isRequestAllowed =  await IsRequestAllowed(id, authenticatedUser);
@@ -101,26 +116,6 @@ namespace StamAcasa.Api.Controllers
             return new OkObjectResult(string.Empty);
         }
 
-        private async Task<(bool NotAllowed, IActionResult Result)> IsRequestAllowed(int? id, UserInfo authenticatedUser)
-        {
-            if (authenticatedUser == null)
-            {
-                return (true, NotFound("Could not find authenticated user"));
-            }
-            if (id.HasValue)
-            {
-                var currentUser = await _userService.GetUserInfo(id.Value);
-                if (currentUser == null)
-                {
-                    return (true, NotFound($"Could not find user with id {id.Value}"));
-                }
 
-                var notFamilyMember = (currentUser.ParentId.HasValue && currentUser.ParentId != authenticatedUser.Id) || !currentUser.ParentId.HasValue;
-                if (authenticatedUser.Id != currentUser.Id && notFamilyMember)
-                    return (true, new StatusCodeResult(StatusCodes.Status403Forbidden));
-            }
-
-            return (false, null);
-        }
     }
 }
